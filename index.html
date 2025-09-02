@@ -1,1 +1,368 @@
 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from bokeh.plotting import figure, show, gridplot
+import bokeh.io
+bokeh.io.reset_output()
+bokeh.io.output_notebook()
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import TimeSeriesSplit
+import xgboost as XGB
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import statsmodels.api as sm
+from sklearn.ensemble import RandomForestRegressor
+from sklearn import svm
+from sklearn.feature_selection import RFE
+from scipy.stats import truncnorm
+def results_analysis(result, ytest):
+    #calculate and return accuracy
+    
+    print("Number of spikes predicted: ", np.sum(result))
+    print("True number of spikes: ", np.sum(ytest))
+    false_positive = [(a,b) for (a,b) in zip(result,ytest) if a != b and b == 0]
+    false_negative = [(a,b) for (a,b) in zip(result,ytest) if a != b and b == 1]
+    true_positive = [(a,b) for (a,b) in zip(result,ytest) if a == b and b == 1]
+    accuracy = len(true_positive)/np.sum(ytest)
+    Pfalse_negative = len(false_negative)/np.sum(ytest)
+    print("P(true positive): ", accuracy)
+    print("P(false negative): ", Pfalse_negative)
+    print("No of false positives (Predicted spike | no spike): ", len(false_positive))
+    print("No of false negatives (Predicted no spike | spike): ", len(false_negative))
+    print("No of true positives (Predicted spike | spike): ", len(true_positive))
+    return
+
+def get_spikes(y_pred, y_test):
+    
+    #define a spike
+    spike = np.mean(y_test) + np.std(y_test)
+    
+    spike_pred = np.zeros(len(y_pred)) #this will be our final result
+    spike_true = np.zeros(len(y_test))
+    
+    #check for each price whether it is labeled as a spike or not
+    count = 0
+    for x in y_pred:
+        if x >= spike:
+            spike_pred[count] = 1
+        count += 1
+
+    count = 0    
+    for x in y_test:
+        if x >= spike:
+            spike_true[count] = 1
+        count += 1
+    
+    
+    return spike_pred, spike_true
+
+#third row contains the titles
+data2003 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2003_v1.csv', header = 3, sep = ",")
+data2004 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2004_v1.csv', header = 3, sep = ",")
+data2005 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2005_v1.csv', header = 3, sep = ",")
+data2006 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2006_v1.csv', header = 3, sep = ",")
+data2007 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2007_v1.csv', header = 3, sep = ",")
+data2008 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2008_v1.csv', header = 3, sep = ",")
+data2009 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2009_v1.csv', header = 3, sep = ",")
+data2010 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2010_v1.csv', header = 3, sep = ",")
+data2011 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2011_v1.csv', header = 3, sep = ",")
+data2012 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2012_v1.csv', header = 3, sep = ",")
+data2013 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2013_v1.csv', header = 3, sep = ",")
+data2014 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2014_v1.csv', header = 3, sep = ",")
+data2015 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2015_v1.csv', header = 3, sep = ",")
+data2016 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2016_v1.csv', header = 3, sep = ",")
+data2017 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2017_v1.csv', header = 3, sep = ",")
+data2018 = pd.read_csv('/content/gdrive/My Drive/Colab/Data/PUB_PriceHOEPPredispOR_2018_v148.csv', header = 3, sep = ",")
+data = pd.concat([data2003,data2004,data2005,data2006,data2007,data2008,\
+                 data2009,data2010,data2011,data2012,data2013,data2014,\
+                 data2015,data2016,data2017,data2018],ignore_index=True)
+data = data.drop(['Date','Hour','OR 10 Min Sync','OR 10 Min non-sync','OR 30 Min'], axis = 1)
+data['Date'] = np.arange('2003', '2019', dtype='datetime64[h]')
+display(data.head(5))
+data.columns = ['Price', "lag k = -1",'lag k = -2', 'lag k = -3','Date']
+data = data.reindex(['Date','Price', "lag k = -1",'lag k = -2', 'lag k = -3'], axis = "columns")
+display(data.head(5))
+data['Price'].describe()
+print(len(data['Price']))
+counter = 0
+for x in data['Price']:
+    if isinstance(x,float) == False:
+        print((x,counter))
+    counter = counter + 1
+p = figure(plot_width=600, plot_height=300, x_axis_type="datetime", \
+          x_axis_label = 'Year', y_axis_label = 'Price (CAD)')
+
+# add a line renderer
+p.line(data['Date'],data['Price'].values, line_width=2)
+p.line(data['Date'],np.ones(len(data['Price']))*np.mean(data['Price']), \
+       color = 'red', line_width = 2)
+show(p)
+print("The average price is: ", np.mean(data['Price']))
+print("The maximum price is: ", np.max(data['Price']))
+print("The minimum price is: ", np.min(data['Price']))
+print("The std of the price is: ", np.std(data['Price']))
+fig = plt.figure(figsize=(12,8))
+ax1 = fig.add_subplot(211)
+fig = sm.graphics.tsa.plot_acf(data['Price'].values.squeeze(), lags=100, ax=ax1)
+#plt.xlabel('Lag k')
+plt.ylabel('Correlation')
+ax2 = fig.add_subplot(212)
+fig = sm.graphics.tsa.plot_pacf(data['Price'], lags=100, ax=ax2)
+plt.xlabel('Lag k')
+plt.ylabel('Correlation')
+
+data['DateAsNum'] = pd.to_numeric(data['Date'])
+data['Year'] = [date.year for date in data['Date']]
+data['Month'] = [date.month for date in data['Date']]
+data['Day'] = [date.day for date in data['Date']]
+data['Hour'] = [date.hour for date in data['Date']]
+data['lag k = 1'] = data['Price'].shift(1)
+data['lag k = 2'] = data['Price'].shift(2)
+data['lag k = 3'] = data['Price'].shift(3)
+data['lag k = 23'] = data['Price'].shift(23)
+data['lag k = 24'] = data['Price'].shift(24)
+data['lag k = 48'] = data['Price'].shift(48)
+data['lag k = -1'] = data['Price'].shift(1)
+data['lag k = -2'] = data['Price'].shift(2)
+data['lag k = -3'] = data['Price'].shift(3)
+
+data.head(5)
+data = data.drop(data.index[0:48])
+data = data.drop(data.index[-2:])
+
+corr = data.corr()
+
+#plot the heatmap
+sns.heatmap(corr, 
+        xticklabels=corr.columns,
+        yticklabels=corr.columns)
+#pd.scatter_matrix(data)
+data = data.drop(columns = ['Date', 'DateAsNum', 'Year', 'Month', 'Day'])
+print(data.columns)
+
+x = data[['lag k = -1', 'lag k = -2', 'lag k = -3', 'Hour', 'lag k = 1', 'lag k = 2', 'lag k = 3',
+       'lag k = 23', 'lag k = 24', 'lag k = 48']]
+y = data['Price']
+X_train, X_test, y_train, y_test = train_test_split(
+     x, y, test_size=0.33, random_state=False)
+
+y_train.describe()
+
+y_test.describe()
+y_train.hist(bins = 100)
+def create_dummies(df,column_name):
+    dummies = pd.get_dummies(df[column_name],prefix=column_name)
+    df = pd.concat([df,dummies],axis=1)
+    return df
+
+data = create_dummies(data,"Hour")
+display(data.head(5))
+data.to_csv("Final_dataset.csv",index = False)
+data_2018 = data[-8640:]
+print(data_2018)
+print(max(data_2018['Price']), min(data_2018['Price']))
+df = pd.read_csv('/content/gdrive/My Drive/Colab/Data/Final_dataset.csv',header = 0, sep = ',')
+df_sub = df[-1000:]
+print(df_sub.columns)
+X = df_sub[['Hour','Hour_20', 'Hour_21', 'Hour_22']]
+y = df_sub['Price']
+X_train, X_test, y_train, y_test = train_test_split(
+     X, y, test_size=0.33, shuffle=False)
+
+RMSE_xgb = list()
+MAE_xgb = list()
+
+for years in range(0,30):
+    current_df = df[-(years+1)*4320:]
+    X = current_df[['lag k = -1', 'lag k = -2', 'lag k = -3',
+       'lag k = 1', 'lag k = 2', 'lag k = 3', 'lag k = 24',]]
+    y = current_df['Price']
+    X_train, X_test, y_train, y_test = train_test_split(
+         X, y, test_size=0.33, shuffle=False)
+    print("Shape of data set: ", current_df.shape)
+    xgb = XGB.XGBRegressor(n_estimators = 100, learning_rate = 0.1)
+    #Add silent=True to avoid printing out updates with each cycle
+    xgb.fit(X_train, y_train)
+    predictions_xgb = xgb.predict(X_test)
+    RMSE_xgb.append(mean_squared_error(y_test, predictions_xgb))
+    MAE_xgb.append(mean_absolute_error(y_test, predictions_xgb))
+    
+#plot the RMSE and MAE
+plt.subplot(2,1,1)
+plt.plot(range(0,30), RMSE_xgb, label = 'RMSE', color = 'k')
+plt.ylabel('RMSE')
+plt.xlabel('Months (per 6 months)')
+plt.subplot(2,1,2)
+plt.plot(range(0,30), MAE_xgb, label = 'MAE', color = 'r', linestyle = 'dashed')
+plt.ylabel('MAE')
+plt.xlabel('Months (per 6 months)')
+plt.legend()
+
+X_xgb = df_sub[['lag k = -1', 'lag k = 1', 'lag k = 2', 'lag k = -2', 'lag k = -3', \
+             'lag k = 24', 'lag k = 3', 'Hour_0', 'Hour_1', 'Hour_2', 'Hour_3', 'Hour_4', 'Hour_5', 'Hour_6',
+       'Hour_7', 'Hour_8', 'Hour_9', 'Hour_10', 'Hour_11', 'Hour_12',
+       'Hour_13', 'Hour_14', 'Hour_15', 'Hour_16', 'Hour_17', 'Hour_18',
+       'Hour_19', 'Hour_20', 'Hour_21', 'Hour_22', 'Hour_23']]
+y = df_sub['Price']
+X_xgb_train, X_xgb_test, y_train, y_test = train_test_split(
+     X_xgb, y, test_size=0.33, shuffle=False)
+print("Shape of data set: ", df_sub.shape)
+xgb = XGB.XGBRegressor()
+xgb.fit(X_xgb_train, y_train)
+predictions_xgb = xgb.predict(X_xgb_test)
+print("MSE: ", mean_squared_error(y_test, predictions_xgb))
+print("MAE: ", mean_absolute_error(y_test, predictions_xgb))
+
+print("Shape of data set: ", df_sub.shape)
+xgb = XGB.XGBRegressor()
+xgb_MSE = list()
+xgb_MAE = list()
+#Add silent=True to avoid printing out updates with each cycle
+tscv = TimeSeriesSplit(n_splits=5)
+TimeSeriesSplit(max_train_size=None, n_splits=3)
+
+for train_index, test_index in tscv.split(X_xgb):
+    print("TRAIN:", train_index, "TEST:", test_index)
+    X_xgb_train, X_xgb_test = X_xgb.iloc[train_index], X_xgb.iloc[test_index]
+    y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+    xgb.fit(X_xgb_train, y_train)
+    predictions_xgb = xgb.predict(X_xgb_test)
+    xgb_MSE.append(mean_squared_error(y_test, predictions_xgb))
+    xgb_MAE.append(mean_absolute_error(y_test, predictions_xgb))
+    print("MSE: ", mean_squared_error(y_test, predictions_xgb))
+    print("MAE: ", mean_absolute_error(y_test, predictions_xgb))
+print("Averaged MSE: ", np.mean(xgb_MSE))
+print("Averaged MAE: ",np.mean(xgb_MAE))
+
+X_rf = df_sub[['lag k = -1', 'lag k = 1', 'lag k = -2', 'lag k = 2', 'lag k = -3',\
+               'lag k = 24', 'lag k = 3', 'Hour_0', 'Hour_1', 'Hour_2', 'Hour_3', 'Hour_4', 'Hour_5', 'Hour_6',
+       'Hour_7', 'Hour_8', 'Hour_9', 'Hour_10', 'Hour_11', 'Hour_12',
+       'Hour_13', 'Hour_14', 'Hour_15', 'Hour_16', 'Hour_17', 'Hour_18',
+       'Hour_19', 'Hour_20', 'Hour_21', 'Hour_22', 'Hour_23']]
+y = df_sub['Price']
+X_rf_train, X_rf_test, y_train, y_test = train_test_split(
+     X_rf, y, test_size=0.33, shuffle=False)
+# Instantiate model with 1000 decision trees
+rf = RandomForestRegressor()
+# Train the model on training data
+rf.fit(X_rf_train, y_train)
+predictions_rf = rf.predict(X_rf_test)
+print("MSE: ", mean_squared_error(y_test, predictions_rf))
+print("MAE: ",mean_absolute_error(y_test, predictions_rf))
+
+predictions_rf = rf.predict(X_rf_test)
+print("MSE: ", mean_squared_error(y_test, predictions_rf))
+print("MAE: ",mean_absolute_error(y_test, predictions_rf))
+print(rf.feature_importances_)
+
+X_svr = df_sub[['lag k = -1']]
+y = df_sub['Price']
+X_svr_train, X_svr_test, y_train, y_test = train_test_split(
+     X_svr, y, test_size=0.33, shuffle=False)
+
+svr = svm.SVR()
+svr.fit(X_svr_train, y_train)
+predictions_SVR = svr.predict(X_svr_test)
+print("MSE: ", mean_squared_error(y_test, predictions_SVR))
+print("MAE: ",mean_absolute_error(y_test, predictions_SVR))
+
+X_opt = df_sub[['lag k = -1', 'lag k = 1', 'lag k = 2', 'lag k = -2', 'lag k = -3', \
+             'lag k = 24', 'lag k = 3', 'Hour_0', 'Hour_1', 'Hour_2', 'Hour_3', 'Hour_4', 'Hour_5', 'Hour_6',
+       'Hour_7', 'Hour_8', 'Hour_9', 'Hour_10', 'Hour_11', 'Hour_12',
+       'Hour_13', 'Hour_14', 'Hour_15', 'Hour_16', 'Hour_17', 'Hour_18',
+       'Hour_19', 'Hour_20', 'Hour_21', 'Hour_22', 'Hour_23']]
+y = df_sub['Price']
+X_opt_train, X_opt_test, y_train, y_test = train_test_split(
+     X_xgb, y, test_size=0.33, shuffle=False)
+
+min_MSE = 1000
+min_MAE = 0
+min_index = 0
+for n in range(10,100):
+    
+    xgb = XGB.XGBRegressor(n_estimators = n)
+    xgb.fit(X_opt_train, y_train)
+    predictions_opt = xgb.predict(X_opt_test)
+    #print("MSE: ", mean_squared_error(y_test, predictions_opt))
+    #print("MAE: ", mean_absolute_error(y_test, predictions_opt))
+    #print(n)
+    if mean_squared_error(y_test, predictions_opt) < min_MSE:
+        min_MSE = mean_squared_error(y_test, predictions_opt)
+        min_MAE = mean_absolute_error(y_test, predictions_opt)
+        min_index = n
+print("MSE: ", min_MSE)
+print("MAE: ", min_MAE)
+print(min_index)
+
+min_MSE = 1000
+min_MAE = 0
+min_index = 0
+for n in range(1,10):
+    
+    xgb = XGB.XGBRegressor(n_estimators = 25, max_depth = n)
+    xgb.fit(X_opt_train, y_train)
+    predictions_opt = xgb.predict(X_opt_test)
+    #print("MSE: ", mean_squared_error(y_test, predictions_opt))
+    #print("MAE: ", mean_absolute_error(y_test, predictions_opt))
+    #print(n)
+    if mean_squared_error(y_test, predictions_opt) < min_MSE:
+        min_MSE = mean_squared_error(y_test, predictions_opt)
+        min_MAE = mean_absolute_error(y_test, predictions_opt)
+        min_index = n
+print("MSE: ", min_MSE)
+print("MAE: ", min_MAE)
+print(min_index)
+
+min_MSE = 1000
+min_MAE = 0
+min_index = 0
+for n in range(1,100):
+    
+    xgb = XGB.XGBRegressor(n_estimators = 25, max_depth = 3, learning_rate = n/100)
+    xgb.fit(X_opt_train, y_train)
+    predictions_opt = xgb.predict(X_opt_test)
+    
+    if mean_squared_error(y_test, predictions_opt) < min_MSE:
+        min_MSE = mean_squared_error(y_test, predictions_opt)
+        min_MAE = mean_absolute_error(y_test, predictions_opt)
+        min_index = n
+print("MSE: ", min_MSE)
+print("MAE: ", min_MAE)
+print(min_index/100)
+
+min_MSE = 1000
+min_MAE = 0
+min_index = 0
+gamma = [0,1,5]
+for n in gamma:
+    
+    xgb = XGB.XGBRegressor(n_estimators = 25, max_depth = 3, learning_rate = 0.1, gamma = n)
+    xgb.fit(X_opt_train, y_train)
+    predictions_opt = xgb.predict(X_opt_test)
+    
+    if mean_squared_error(y_test, predictions_opt) < min_MSE:
+        min_MSE = mean_squared_error(y_test, predictions_opt)
+        min_MAE = mean_absolute_error(y_test, predictions_opt)
+        min_index = n
+print("MSE: ", min_MSE)
+print("MAE: ", min_MAE)
+print(min_index)
+
+xgb = XGB.XGBRegressor(n_estimators = 25, max_depth = 3, learning_rate = 0.1, gamma = n)
+xgb.fit(X_opt_train, y_train)
+predictions_opt = xgb.predict(X_opt_test)    
+print("MSE: ", mean_squared_error(y_test, predictions_opt))
+print("MAE: ", mean_absolute_error(y_test, predictions_opt))
+spike_pred, spike_true = get_spikes(predictions_opt, y_test)
+results_analysis(spike_pred, spike_true)
+print('')
+#plot
+plt.plot(np.arange(0,len(y_test)), y_test, color='darkorange', label='True price')
+plt.plot(np.arange(0,len(y_test)),predictions_opt, label='Forecasted price')
+plt.xlabel('Measurement')
+plt.ylabel('Price (CAD/MWh)')
+plt.title('Price Forecast')
+plt.legend()
+plt.show()
+
